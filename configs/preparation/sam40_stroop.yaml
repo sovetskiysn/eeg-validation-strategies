@@ -1,0 +1,9 @@
+defaults:
+  - _sam40_common_default
+  - _self_
+
+name: sam40_stroop
+
+mne_bids_pipeline_config:
+  task: [relax, stroop]
+  deriv_root: ${..dataset_dir}/derivatives/mne-bids-pipeline/relax-stroop

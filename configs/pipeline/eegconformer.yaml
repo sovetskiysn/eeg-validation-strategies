@@ -1,0 +1,65 @@
+# One complete fitted estimator recipe for the convolutional-attention decoder.
+name: eegconformer
+estimator:
+  _target_: imblearn.pipeline.make_pipeline
+  _args_:
+    # Estimate one mean and standard deviation per channel from the outer-train
+    # fold, across its windows and time samples; retain the (windows, channels,
+    # time) geometry the convolutional decoder needs. This makes V -> microV
+    # redundant: standardisation is invariant to that fixed unit conversion.
+    - _target_: mne.decoding.Scaler
+      scalings: mean
+    # MNE's scaler returns float64; the PyTorch module has float32 weights.
+    - _target_: sklearn.preprocessing.FunctionTransformer
+      func:
+        _target_: hydra.utils.get_method
+        path: numpy.float32
+      validate: false
+    # Convolution plus self-attention EEG architecture (Song et al., 2022).
+    # Its larger capacity is deliberately compared with compact EEGNet rather than
+    # being treated as a replacement for the classical feature-based models.
+    - _target_: braindecode.EEGClassifier
+      # Without this, the instantiated `callbacks` stays a ListConfig; skorch's
+      # internal `get_default_callbacks() + callbacks` then tries to append a
+      # plain callback instance into it and OmegaConf rejects it as non-primitive.
+      _convert_: all
+      module:
+        _target_: hydra.utils.get_class
+        path: braindecode.models.EEGConformer
+      # EEGConformer's embedding width is n_filters_time.  The Braindecode
+      # defaults (40 filters, 6 layers, 10 heads) give 527,746 parameters for
+      # the project's 12 x 640 windows, disproportionate to the smallest
+      # train folds.  This keeps the convolution-plus-attention architecture
+      # while reducing it to 170,466 parameters; four heads divide the
+      # 16-dimensional embedding exactly.
+      module__n_filters_time: 16
+      module__num_layers: 2
+      module__num_heads: 4
+      optimizer:
+        _target_: hydra.utils.get_class
+        path: torch.optim.AdamW
+      max_epochs: 100
+      # Braindecode's reference recipes pair this optimisation setup with
+      # batch_size=64. It is a fixed benchmark setting, not a per-fold adaptation.
+      batch_size: 64
+      # Use the same conservative EEGClassifier optimisation recipe as the
+      # Braindecode convolutional baselines.
+      lr: 0.000625
+      # A small AdamW penalty complements the architecture's dropout and is
+      # especially important for the smaller, correlated EEG window folds.
+      optimizer__weight_decay: 0.0001
+      # Do not silently discard a partial tail batch merely because it does not
+      # fill the configured batch size.
+      iterator_train__drop_last: false
+      callbacks:
+        - _target_: skorch.callbacks.LRScheduler
+          policy: CosineAnnealingLR
+          T_max: 99
+        # `class_weight="balanced"` for this estimator, read off each train fold
+        # (src/pipeline.py). It replaces the oversampling step that used to run
+        # before the classifier, which duplicated correlated windows.
+        - _target_: pipeline.BalancedClassWeight
+      device: cuda
+      # Fixed-recipe benchmark: train for all 100 epochs on the outer-train fold.
+      train_split: null
+      verbose: 0

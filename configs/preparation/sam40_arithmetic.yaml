@@ -1,0 +1,9 @@
+defaults:
+  - _sam40_common_default
+  - _self_
+
+name: sam40_arithmetic
+
+mne_bids_pipeline_config:
+  task: [relax, arithmetic]
+  deriv_root: ${..dataset_dir}/derivatives/mne-bids-pipeline/relax-arithmetic

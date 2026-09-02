@@ -1,0 +1,57 @@
+# One complete fitted estimator recipe for the compact EEG convolutional decoder.
+name: eegnet
+estimator:
+  _target_: imblearn.pipeline.make_pipeline
+  _args_:
+    # Estimate one mean and standard deviation per channel from the outer-train
+    # fold, across its windows and time samples; retain the (windows, channels,
+    # time) geometry the convolutional decoder needs. This makes V -> microV
+    # redundant: standardisation is invariant to that fixed unit conversion.
+    - _target_: mne.decoding.Scaler
+      scalings: mean
+    # MNE's scaler returns float64; the PyTorch module has float32 weights.
+    - _target_: sklearn.preprocessing.FunctionTransformer
+      func:
+        _target_: hydra.utils.get_method
+        path: numpy.float32
+      validate: false
+    # Compact EEG-specific convolutional network (Lawhern et al., 2018).
+    - _target_: braindecode.EEGClassifier
+      # Without this, the instantiated `callbacks` stays a ListConfig; skorch's
+      # internal `get_default_callbacks() + callbacks` then tries to append a
+      # plain callback instance into it and OmegaConf rejects it as non-primitive.
+      _convert_: all
+      module:
+        _target_: hydra.utils.get_class
+        path: braindecode.models.EEGNet
+      # Keep Braindecode's published EEGNet architecture defaults (F1=8, D=2,
+      # 64-sample temporal kernel and drop_prob=0.25). They are the library's
+      # compact baseline; architecture tuning belongs in a dedicated train-only
+      # tuning study, not in the final protocol sweep.
+      optimizer:
+        _target_: hydra.utils.get_class
+        path: torch.optim.AdamW
+      max_epochs: 100
+      # Braindecode's reference recipes pair this optimisation setup with
+      # batch_size=64. It is a fixed benchmark setting, not a per-fold adaptation.
+      batch_size: 64
+      # Braindecode's EEGClassifier examples use AdamW with this learning rate and
+      # no weight decay for trial-wise EEG decoding.
+      lr: 0.000625
+      optimizer__weight_decay: 0.0
+      # EEGClassifier defaults to drop_last=True, which discards a partial tail
+      # batch at every epoch.
+      iterator_train__drop_last: false
+      callbacks:
+        - _target_: skorch.callbacks.LRScheduler
+          policy: CosineAnnealingLR
+          T_max: 99
+        # `class_weight="balanced"` for this estimator, read off each train fold
+        # (src/pipeline.py). It replaces the oversampling step that used to run
+        # before the classifier, which duplicated correlated windows.
+        - _target_: pipeline.BalancedClassWeight
+      device: cuda
+      # Fixed-recipe benchmark: all outer-train rows are used for every one of
+      # the 100 epochs; the outer CV test fold is the sole validation set.
+      train_split: null
+      verbose: 0

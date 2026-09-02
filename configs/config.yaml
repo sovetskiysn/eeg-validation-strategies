@@ -1,0 +1,24 @@
+defaults:
+  - preparation: sam40_all
+  - features: classical_ml
+  - pipeline: logistic_regression
+  - validation_strategy: baseline
+  - _self_
+
+seed: 42
+torch_num_threads: 12
+
+hydra:
+  job:
+    name: adhoc
+    chdir: false
+  run:
+    dir: results/default_run (${now:%Y-%m-%d %% %H-%M-%S})
+  sweep:
+    dir: results/default_sweep (${now:%Y-%m-%d %% %H-%M-%S})
+    subdir: ${hydra.job.override_dirname}
+  callbacks:
+    hardware_trace:
+      _target_: hydra_setup.HardwareTraceCallback
+    log_job_return:
+      _target_: hydra.experimental.callbacks.LogJobReturnCallback
